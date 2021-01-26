@@ -1,0 +1,72 @@
+variables:
+  PROJECT_NAME: "identity-server4-postgresql"
+
+stages:
+    - getver
+    - build-image
+
+getver:
+    image: 
+      name: $GITVERSION_IMAGE
+      entrypoint: [""]
+    stage: getver
+    tags:
+      - "docker-runner"
+
+    script:
+      - gitversion /output buildserver
+      - mkdir gitversion
+      - cat gitversion.properties | grep GitVersion_MajorMinorPatch | sed -e 's/+/-/g' > gitversion/GitVersion_MajorMinorPatch.txt
+      - cat gitversion.properties | grep GitVersion_BranchName > gitversion/GitVersion_BranchName.txt
+      - cat gitversion.properties | grep GitVersion_ShortSha > gitversion/GitVersion_ShortSha.txt
+      - cat gitversion.properties | grep GitVersion_CommitsSinceVersionSource= | sed -e 's/+/-/g' > gitversion/GitVersion_CommitsSinceVersionSource.txt
+      - cat gitversion.properties | grep GitVersion_SemVer > gitversion/GitVersion_SemVer.txt
+      - cat gitversion.properties | grep GitVersion_FullSemVer | sed -e 's/+/-/g' > gitversion/GitVersion_FullSemVer.txt
+    artifacts:
+      name: "$PROJECT_NAME-${CI_ENVIRONMENT_NAME}-${CI_COMMIT_SHA:0:8}"
+      paths:
+        - gitversion/
+      expire_in: 1 week
+
+.build_image_job_template: &build_image_job_common
+  stage: build-image
+  tags: 
+    - "docker-image-build"
+  before_script:
+    - export $(cat gitversion/GitVersion_MajorMinorPatch.txt)
+    - export $(cat gitversion/GitVersion_BranchName.txt)
+    - export $(cat gitversion/GitVersion_ShortSha.txt)
+    - export $(cat gitversion/GitVersion_CommitsSinceVersionSource.txt)
+    - export $(cat gitversion/GitVersion_SemVer.txt)
+  script:
+    - "echo Starting $CI_ENVIRONMENT_NAME build image"
+    - eval $IMAGE_TAG_COMBINE
+    - "echo IMAGE_TAG: $IMAGE_TAG"
+    - docker login $DOCKER_REGISTRY --username $DOCKER_REGISTRY_USER --password $DOCKER_REGISTRY_PASSWORD
+    - docker build -t $IMAGE_TAG  .
+    - docker push $IMAGE_TAG
+    - docker logout $DOCKER_REGISTRY
+  after_script:
+    - export $(cat gitversion/GitVersion_MajorMinorPatch.txt)
+    - export $(cat gitversion/GitVersion_BranchName.txt)
+    - export $(cat gitversion/GitVersion_ShortSha.txt)
+    - export $(cat gitversion/GitVersion_CommitsSinceVersionSource.txt)
+    - export $(cat gitversion/GitVersion_SemVer.txt)
+    - eval $IMAGE_TAG_COMBINE
+    - "echo IMAGE_TAG: $IMAGE_TAG"
+    - "echo Delete Build Docker Image"
+    - docker image rm $IMAGE_TAG
+
+build_image:
+  <<: *build_image_job_common
+  variables:
+    IMAGE_TAG_COMBINE: "IMAGE_TAG=$$DOCKER_REGISTRY/$$PROJECT_NAME:$$GitVersion_SemVer-$$GitVersion_CommitsSinceVersionSource"
+  environment:
+    name: development
+  only:
+    refs:
+      - master
+      - /^[0-9].[0-9]+.[0-9]+$/
+      - /^dev(elop)?(ment)?$/
+  when: manual
+  
